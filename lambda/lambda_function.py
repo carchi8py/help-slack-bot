@@ -9,45 +9,7 @@ REPLYWORDS = [
     'error'
 ]
 
-BLOCK_REPLY = """
-[
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "To quickly help you please reply to this thread with the following information\n• Ansible Version `ansible --version` \n• Collection Version -- `ansible-galaxy collection list`\n"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "If your having issues with a playbook please also include\n• The playbook it self\n• If your getting an error with the playbook the add `-vvv` to the end of the `ansible-playbook` command and copy the output"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "If your requesting a new feature or options\n• For new Features let us know the what the current non ansible command is that you use\n• For new options let us know the Module and which option is missing"
-        }
-    },
-    {
-        "type": "divider"
-    },
-    {
-        "type": "context",
-        "elements": [
-            {
-                "type": "mrkdwn",
-                "text": ":page_facing_up: <https://docs.ansible.com/ansible/devel/collections/index.html|Ansible Documentation> :page_facing_up: --  :Github: <https://github.com/ansible-collections?q=netapp&type=&language=&sort=| NetApp Github Repos> :Github:"
-            }
-        ]
-    }
-]
-"""
-
-BLOCK_REPLY_V2 ="""
+BLOCK_REPLY_V2 = """
 [
     {
         "type": "section",
@@ -274,16 +236,14 @@ RETURN_TEXT = """
 action_id = 'help_me'
 
 
-def send_text_response(event, blocks, channel_id=None, thread_ts=None):
+def send_text_response(blocks, channel_id=None, thread_ts=None, user=None):
     # use postMessage if we want visible for everybody
     # use postEphemeral if we want just the user to see
-    SLACK_URL = "https://slack.com/api/chat.postMessage"
-    if not channel_id:
-        channel_id = event["event"]["channel"]
-    user = None if event == 'NOTHING' else event["event"]["user"]
+    slack_url = "https://slack.com/api/chat.postMessage"
+    channel_id = channel_id
+    user = user
     bot_token = os.environ["BOT_TOKEN"]
-    if not thread_ts:
-        thread_ts = event['event']['ts']
+    thread_ts = thread_ts
     data = urllib.parse.urlencode({
         "token": bot_token,
         "channel": channel_id,
@@ -293,12 +253,13 @@ def send_text_response(event, blocks, channel_id=None, thread_ts=None):
         "parse": True,
         "thread_ts": thread_ts
     })
-    data = data.encode("ascii")
     print(data)
-    request = urllib.request.Request(SLACK_URL, data=data, method="POST")
+    data = data.encode("ascii")
+    request = urllib.request.Request(slack_url, data=data, method="POST")
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
     res = urllib.request.urlopen(request).read()
     print('res:', res)
+
 
 def send_modal(trigger_id, modal):
     slack_url = 'https://slack.com/api/views.open'
@@ -315,24 +276,28 @@ def send_modal(trigger_id, modal):
     res = urllib.request.urlopen(request).read()
     print('res:', res)
 
-def parse_button(event):
-    print(event)
-    # They click a button in the message
-    if event['type'] == 'block_actions':
-        print(event['actions'][0]['action_id'])
-        # Each button has a action_id that we assign to it
-        if event['actions'][0]['action_id'] == action_id:
-            trigger_id = event['trigger_id']
-            channel_id = event['container']['channel_id']
-            thread_ts = event['container']['thread_ts']
-            modal = update_modal(channel_id, thread_ts)
-            send_modal(trigger_id, modal)
-    # They clicked the submit button in the modal
-    if event['type'] == 'view_submission':
-        message, thread_ts, channel_id = parse_responce(event)
-        return_block = create_responce_message(message)
-        send_text_response('NOTHING', return_block, channel_id, thread_ts)
-    return
+
+def parse_message(event):
+    if not is_bot(event) and event["text"] in REPLYWORDS:
+        send_text_response(BLOCK_REPLY_V2, event['channel'], event['ts'], event['user'])
+    else:
+        print(is_bot(event))
+
+
+def parse_button_push(event):
+    if event['actions'][0]['action_id'] == action_id:
+        trigger_id = event['trigger_id']
+        channel_id = event['container']['channel_id']
+        thread_ts = event['container']['thread_ts']
+        modal = update_modal(channel_id, thread_ts)
+        send_modal(trigger_id, modal)
+
+
+def parse_modal_submit(event):
+    message, thread_ts, channel_id = parse_responce(event)
+    return_block = create_responce_message(message)
+    send_text_response(return_block, channel_id, thread_ts)
+
 
 def parse_responce(event):
     message = {}
@@ -356,6 +321,7 @@ def create_responce_message(message):
     print(return_message)
     return return_message
 
+
 def update_modal(channel_id, thread_ts):
     message = BLOCK_MODAL
     message = insert_string(message, '"text": "channel_id:', channel_id)
@@ -368,26 +334,54 @@ def insert_string(message, cut_point, string_to_add):
     cut_point_len = len(cut_point)
     return message[:(index + cut_point_len)] + string_to_add + message[(index + cut_point_len):]
 
+
 def is_bot(event):
-    return 'bot_profile' in event['event']
+    return 'bot_profile' in event
+
+
+def covert_base_64(event):
+    """
+    Covert a base 64 message that json can understand
+    :param event: Event from slack in base64
+    :return: Event in string format
+    """
+    body = event.get("body", "")
+    body = base64.b64decode(body).decode("utf-8")
+    # Decoding the base64 return leave all the %22 URL charters, this coverts them to there utf-8 form
+    body = parse.unquote(body)
+    # Something above cause this to not be valid json, to fix this we just strip the payload= part out, and we get valid json
+    body = body.split('payload=')[1]
+    event = json.loads(body)
+    return event
 
 
 def lambda_handler(event, context):
     if event["isBase64Encoded"]:
-        body = event.get("body", "")
-        body = base64.b64decode(body).decode("utf-8")
-        # Decoding the base64 return leave all the %22 URL charters, this coverts them to there utf-8 form
-        body = parse.unquote(body)
-        # Something above cause this to not be valid json, to fix this we just strip the payload= part out, and we get valid json
-        body = body.split('payload=')[1]
-        event = json.loads(body)
-        parse_button(event)
-
+        event = covert_base_64(event)
     else:
         event = json.loads(event["body"])
-        print('event', event)
-        if not is_bot(event) and event["event"]["text"] in REPLYWORDS:
-            send_text_response(event, BLOCK_REPLY_V2)
+        event = event['event']
+    print('event', event)
+    if event['type'] == 'message':
+        print('message')
+        parse_message(event)
+        return {
+            'statusCode': 200,
+            'body': 'OK'
+        }
+    if event['type'] == 'block_actions':
+        print('block_actions')
+        parse_button_push(event)
+        return {
+            'statusCode': 200,
+            'body': 'OK'
+        }
+    if event['type'] == 'view_submission':
+        print('view_submission')
+        parse_modal_submit(event)
+        return {
+            "response_action": "clear"
+        }
 
     return {
         'statusCode': 200,
