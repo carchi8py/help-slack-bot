@@ -25,11 +25,26 @@ BLOCK_REPLY_V2 = """
                 "type": "button",
                 "text": {
                     "type": "plain_text",
-                    "text": "Report a Bug",
+                    "text": "Report a Bug or Issue",
                     "emoji": true
                 },
                 "value": "help_me",
                 "action_id": "help_me"
+            }
+        ]
+    },
+    {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "New Module or Options",
+                    "emoji": true
+                },
+                "value": "new_module",
+                "action_id": "new_module"
             }
         ]
     },
@@ -186,6 +201,91 @@ BLOCK_MODAL = """
 }
 """
 
+NEW_MODULE_MODAL = """
+{
+	"type": "modal",
+	"title": {
+		"type": "plain_text",
+		"text": "Ansible Helper",
+		"emoji": true
+	},
+	"submit": {
+		"type": "plain_text",
+		"text": "Submit",
+		"emoji": true
+	},
+	"close": {
+		"type": "plain_text",
+		"text": "Cancel",
+		"emoji": true
+	},
+	"blocks": [
+		{
+			"type": "section",
+			"text": {
+				"type": "plain_text",
+				"text": "Ansible_new_feature",
+				"emoji": true
+			}
+		},
+		{
+			"type": "input",
+			"element": {
+				"type": "plain_text_input",
+				"action_id": "collection"
+			},
+			"label": {
+				"type": "plain_text",
+				"text": "Which Collection",
+				"emoji": true
+			}
+		},
+		{
+			"type": "input",
+			"element": {
+				"type": "plain_text_input",
+				"multiline": true,
+				"action_id": "new_module"
+			},
+			"label": {
+				"type": "plain_text",
+				"text": "Description of what you are trying to do or what option is missing",
+				"emoji": true
+			}
+		},
+		{
+			"type": "input",
+			"element": {
+				"type": "plain_text_input",
+				"multiline": true,
+				"action_id": "example"
+			},
+			"label": {
+				"type": "plain_text",
+				"text": "Example of how you are doing this today",
+				"emoji": true
+			}
+		},
+		{
+			"type": "section",
+			"text": {
+				"type": "plain_text",
+				"text": "channel_id:",
+				"emoji": true
+			}
+		},
+		{
+			"type": "section",
+			"text": {
+				"type": "plain_text",
+				"text": "thread_ts:",
+				"emoji": true
+			}
+		}
+	]
+}
+"""
+
 RETURN_TEXT = """
 [
     {
@@ -233,7 +333,31 @@ RETURN_TEXT = """
 ]
 """
 
-action_id = 'help_me'
+RETURN_TEXT_NEW_FEATURE = """
+[
+    {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": "collection:"
+        }
+    },
+    {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": "new_module:"
+        }
+    },
+    {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": "example:"
+        }
+    }
+]
+"""
 
 
 def send_text_response(blocks, channel_id=None, thread_ts=None, user=None):
@@ -285,17 +409,19 @@ def parse_message(event):
 
 
 def parse_button_push(event):
-    if event['actions'][0]['action_id'] == action_id:
-        trigger_id = event['trigger_id']
-        channel_id = event['container']['channel_id']
-        thread_ts = event['container']['thread_ts']
-        modal = update_modal(channel_id, thread_ts)
-        send_modal(trigger_id, modal)
+    trigger_id = event['trigger_id']
+    channel_id = event['container']['channel_id']
+    thread_ts = event['container']['thread_ts']
+    if event['actions'][0]['action_id'] == 'help_me':
+        modal = update_modal(channel_id, thread_ts, BLOCK_MODAL)
+    if event['actions'][0]['action_id'] == 'new_module':
+        modal = update_modal(channel_id, thread_ts, NEW_MODULE_MODAL)
+    send_modal(trigger_id, modal)
 
 
 def parse_modal_submit(event):
-    message, thread_ts, channel_id = parse_responce(event)
-    return_block = create_responce_message(message)
+    message, thread_ts, channel_id, return_text = parse_responce(event)
+    return_block = create_responce_message(message, return_text)
     send_text_response(return_block, channel_id, thread_ts)
 
 
@@ -305,25 +431,28 @@ def parse_responce(event):
         for block in event['view']['state']['values']:
             for key in event['view']['state']['values'][block]:
                 message[key] = event['view']['state']['values'][block][key]['value']
+        return_text = RETURN_TEXT
+    if event['view']['blocks'][0]['text']['text'] == "Ansible_new_feature":
+        for block in event['view']['state']['values']:
+            for key in event['view']['state']['values'][block]:
+                message[key] = event['view']['state']['values'][block][key]['value']
+        return_text = RETURN_TEXT_NEW_FEATURE
     thread_ts = (event['view']['blocks'][-1]['text']['text']).split(':')[1]
     channel_id = (event['view']['blocks'][-2]['text']['text']).split(':')[1]
-    return message, thread_ts, channel_id
+    print(message)
+    return message, thread_ts, channel_id, return_text
 
 
-def create_responce_message(message):
-    return_message = RETURN_TEXT
-    print(return_message)
-    print('-----')
+def create_responce_message(message, return_text):
+    return_message = return_text
     for each in message:
-        print(each)
         return_message = insert_string(return_message, (each + ':'), (' ' + message[each]))
-
     print(return_message)
     return return_message
 
 
-def update_modal(channel_id, thread_ts):
-    message = BLOCK_MODAL
+def update_modal(channel_id, thread_ts, modal):
+    message = modal
     message = insert_string(message, '"text": "channel_id:', channel_id)
     message = insert_string(message, '"text": "thread_ts:', thread_ts)
     return message
