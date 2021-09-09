@@ -3,6 +3,7 @@ from six.moves import urllib
 import json
 import base64
 import urllib.parse as parse
+import boto3
 
 REPLYWORDS = [
     'help',
@@ -286,79 +287,6 @@ NEW_MODULE_MODAL = """
 }
 """
 
-RETURN_TEXT = """
-[
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "ansible_version:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "system_version:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "collection_version:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "problem:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "playbook:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "error:"
-        }
-    }
-]
-"""
-
-RETURN_TEXT_NEW_FEATURE = """
-[
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "collection:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "new_module:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "example:"
-        }
-    }
-]
-"""
-
 
 def send_text_response(blocks, channel_id=None, thread_ts=None, user=None):
     # use postMessage if we want visible for everybody
@@ -420,35 +348,39 @@ def parse_button_push(event):
 
 
 def parse_modal_submit(event):
-    message, thread_ts, channel_id, return_text = parse_responce(event)
-    return_block = create_responce_message(message, return_text)
-    send_text_response(return_block, channel_id, thread_ts)
+    message, thread_ts, channel_id, user = parse_responce(event)
+    add_to_db(user, thread_ts, message)
+
+
+def add_to_db(user, thread_ts, message):
+    dynamodb = boto3.client('dynamodb')
+    key_dic = {'username': {'S': user}, 'timestamp': {'S': thread_ts}}
+    key_dic.update(message)
+    dynamodb.put_item(TableName='help-bot2', Item=key_dic)
 
 
 def parse_responce(event):
     message = {}
+    print(event)
     if event['view']['blocks'][0]['text']['text'] == "Ansible_bug_report":
         for block in event['view']['state']['values']:
             for key in event['view']['state']['values'][block]:
-                message[key] = event['view']['state']['values'][block][key]['value']
-        return_text = RETURN_TEXT
+                message[key] = {'S': event['view']['state']['values'][block][key]['value']}
     if event['view']['blocks'][0]['text']['text'] == "Ansible_new_feature":
         for block in event['view']['state']['values']:
             for key in event['view']['state']['values'][block]:
-                message[key] = event['view']['state']['values'][block][key]['value']
-        return_text = RETURN_TEXT_NEW_FEATURE
+                message[key] = {'S': event['view']['state']['values'][block][key]['value']}
     thread_ts = (event['view']['blocks'][-1]['text']['text']).split(':')[1]
     channel_id = (event['view']['blocks'][-2]['text']['text']).split(':')[1]
-    print(message)
-    return message, thread_ts, channel_id, return_text
+    user = event['user']['username']
+    return message, thread_ts, channel_id, user
 
 
 def create_responce_message(message, return_text):
     return_message = return_text
     for each in message:
         return_message = insert_string(return_message, (each + ':'), (' ' + message[each]))
-    return_message = parse.quote(return_message)
-    print(return_message)
+    #return_message = parse.quote(return_message)
     return return_message
 
 
