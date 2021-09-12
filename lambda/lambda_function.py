@@ -10,6 +10,10 @@ REPLYWORDS = [
     'error'
 ]
 
+OUR_MODULES = [
+    'na_ontap'
+]
+
 BLOCK_REPLY_V2 = """
 [
     {
