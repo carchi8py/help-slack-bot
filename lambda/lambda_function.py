@@ -3,6 +3,8 @@ from six.moves import urllib
 import json
 import base64
 import urllib.parse as parse
+import boto3
+from botocore.exceptions import ClientError
 
 REPLYWORDS = [
     'help',
@@ -66,6 +68,7 @@ BLOCK_REPLY_V2 = """
 BLOCK_MODAL = """
 {
 	"type": "modal",
+	"callback_id": <callid>,
 	"title": {
 		"type": "plain_text",
 		"text": "Ansible Helper",
@@ -180,22 +183,6 @@ BLOCK_MODAL = """
 				"type": "plain_text",
 				"text": "ansible-playbook <your playbook> -vvv"
 			}
-		},
-		{
-			"type": "section",
-			"text": {
-				"type": "plain_text",
-				"text": "channel_id:",
-				"emoji": true
-			}
-		},
-		{
-			"type": "section",
-			"text": {
-				"type": "plain_text",
-				"text": "thread_ts:",
-				"emoji": true
-			}
 		}
 	]
 }
@@ -204,6 +191,7 @@ BLOCK_MODAL = """
 NEW_MODULE_MODAL = """
 {
 	"type": "modal",
+	"callback_id": <callid>,
 	"title": {
 		"type": "plain_text",
 		"text": "Ansible Helper",
@@ -265,98 +253,9 @@ NEW_MODULE_MODAL = """
 				"text": "Example of how you are doing this today",
 				"emoji": true
 			}
-		},
-		{
-			"type": "section",
-			"text": {
-				"type": "plain_text",
-				"text": "channel_id:",
-				"emoji": true
-			}
-		},
-		{
-			"type": "section",
-			"text": {
-				"type": "plain_text",
-				"text": "thread_ts:",
-				"emoji": true
-			}
 		}
 	]
 }
-"""
-
-RETURN_TEXT = """
-[
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "ansible_version:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "system_version:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "collection_version:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "problem:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "playbook:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "error:"
-        }
-    }
-]
-"""
-
-RETURN_TEXT_NEW_FEATURE = """
-[
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "collection:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "new_module:"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": "example:"
-        }
-    }
-]
 """
 
 
@@ -404,25 +303,59 @@ def send_modal(trigger_id, modal):
 def parse_message(event):
     if not is_bot(event) and event["text"] in REPLYWORDS:
         send_text_response(BLOCK_REPLY_V2, event['channel'], event['ts'], event['user'])
+        add_thread_to_database(event)
     else:
         print(is_bot(event))
 
 
+def add_thread_to_database(event):
+    dynamodb = boto3.client('dynamodb')
+    key_dic = {'ts': {'S': event['ts']},
+               'user': {'S': event['user']},
+               'channel': {'S': event['channel']},
+               'text': {'S': event['text']}}
+    dynamodb.put_item(TableName='ts-recorder', Item=key_dic)
+
+
+def get_thread_from_database(thread_id):
+    table = boto3.resource('dynamodb').Table('ts-recorder')
+    try:
+        response = table.get_item(Key={'ts': thread_id})
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+    else:
+        return response['Item']
+
+
+def update_thread_to_datebase(thread_ts, message):
+    table = boto3.resource('dynamodb').Table('ts-recorder')
+    response = table.update_item(
+        Key={'ts': thread_ts},
+        AttributeUpdates=message,
+        ReturnValues="ALL_NEW"
+    )
+    print('Update Response: ' + response)
+
+
 def parse_button_push(event):
     trigger_id = event['trigger_id']
-    channel_id = event['container']['channel_id']
     thread_ts = event['container']['thread_ts']
     if event['actions'][0]['action_id'] == 'help_me':
-        modal = update_modal(channel_id, thread_ts, BLOCK_MODAL)
+        modal = BLOCK_MODAL
     if event['actions'][0]['action_id'] == 'new_module':
-        modal = update_modal(channel_id, thread_ts, NEW_MODULE_MODAL)
+        modal = NEW_MODULE_MODAL
+    modal = update_modal(modal, thread_ts)
     send_modal(trigger_id, modal)
 
 
+def update_modal(modal, thread_ts):
+    callid = '"' + str(thread_ts) + '"'
+    return modal.replace('<callid>', callid)
+
+
 def parse_modal_submit(event):
-    message, thread_ts, channel_id, return_text = parse_responce(event)
-    return_block = create_responce_message(message, return_text)
-    send_text_response(return_block, channel_id, thread_ts)
+    message, thread_ts, channel_id, user = parse_responce(event)
+    update_thread_to_datebase(thread_ts, message)
 
 
 def parse_responce(event):
@@ -430,33 +363,23 @@ def parse_responce(event):
     if event['view']['blocks'][0]['text']['text'] == "Ansible_bug_report":
         for block in event['view']['state']['values']:
             for key in event['view']['state']['values'][block]:
-                message[key] = event['view']['state']['values'][block][key]['value']
-        return_text = RETURN_TEXT
+                message[key] = {"Action": "PUT", "Value": event['view']['state']['values'][block][key]['value']}
     if event['view']['blocks'][0]['text']['text'] == "Ansible_new_feature":
         for block in event['view']['state']['values']:
             for key in event['view']['state']['values'][block]:
-                message[key] = event['view']['state']['values'][block][key]['value']
-        return_text = RETURN_TEXT_NEW_FEATURE
-    thread_ts = (event['view']['blocks'][-1]['text']['text']).split(':')[1]
-    channel_id = (event['view']['blocks'][-2]['text']['text']).split(':')[1]
-    print(message)
-    return message, thread_ts, channel_id, return_text
+                message[key] = {"Action": "PUT", "Value": event['view']['state']['values'][block][key]['value']}
+    thread_ts = (event['view']['callback_id'])
+    db_record = get_thread_from_database(thread_ts)
+    user = event['user']['username']
+    return message, thread_ts, db_record['channel'], user
 
 
 def create_responce_message(message, return_text):
     return_message = return_text
     for each in message:
         return_message = insert_string(return_message, (each + ':'), (' ' + message[each]))
-    return_message = parse.quote(return_message)
-    print(return_message)
+    # return_message = parse.quote(return_message)
     return return_message
-
-
-def update_modal(channel_id, thread_ts, modal):
-    message = modal
-    message = insert_string(message, '"text": "channel_id:', channel_id)
-    message = insert_string(message, '"text": "thread_ts:', thread_ts)
-    return message
 
 
 def insert_string(message, cut_point, string_to_add):

@@ -48,6 +48,18 @@ Copy Lambda_function.py in to code
 #### Environment Variables
 Create a new vairable called `BOT_TOKEN` add the cot user oauth token from slack
 
+##Database set up
+###Create table
+Name: Help-bot
+Partition key: username
+Sort key: timestamp
+
+### Configure access in AWS
+Follow this guide to create IAM policy to allow access to the database
+https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_examples_lambda-access-dynamodb.html
+Follow this to create a role that uses this policy and apply the role to the lambda function
+https://aws.amazon.com/blogs/security/how-to-create-an-aws-iam-policy-to-grant-aws-lambda-access-to-an-amazon-dynamodb-table/
+
 #Monitoring the app
 At this point you should have a running app
 ##monitor
