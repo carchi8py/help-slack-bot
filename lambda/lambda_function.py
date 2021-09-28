@@ -11,10 +11,6 @@ REPLYWORDS = [
     'error'
 ]
 
-OUR_MODULES = [
-    'na_ontap'
-]
-
 BLOCK_REPLY_V2 = """
 [
     {
@@ -318,7 +314,7 @@ def add_thread_to_database(event):
                'user': {'S': event['user']},
                'channel': {'S': event['channel']},
                'text': {'S': event['text']}}
-    response = dynamodb.put_item(TableName='ts-recorder', Item=key_dic)
+    dynamodb.put_item(TableName='ts-recorder', Item=key_dic)
 
 
 def get_thread_from_database(thread_id):
@@ -330,6 +326,7 @@ def get_thread_from_database(thread_id):
     else:
         return response['Item']
 
+
 def update_thread_to_datebase(thread_ts, message):
     table = boto3.resource('dynamodb').Table('ts-recorder')
     response = table.update_item(
@@ -337,6 +334,7 @@ def update_thread_to_datebase(thread_ts, message):
         AttributeUpdates=message,
         ReturnValues="ALL_NEW"
     )
+    print('Update Response: ' + response)
 
 
 def parse_button_push(event):
@@ -353,6 +351,7 @@ def parse_button_push(event):
 def update_modal(modal, thread_ts):
     callid = '"' + str(thread_ts) + '"'
     return modal.replace('<callid>', callid)
+
 
 def parse_modal_submit(event):
     message, thread_ts, channel_id, user = parse_responce(event)
